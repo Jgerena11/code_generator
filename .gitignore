@@ -1,0 +1,4 @@
+#distribution / packaging
+.Python
+venv/
+
