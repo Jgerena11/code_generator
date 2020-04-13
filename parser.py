@@ -3,6 +3,15 @@ import sys
 
 class Parser:
 
+    gen_count = 1
+
+    def print_quadruple(self, quad):
+        print(str(self.gen_count), end="\t")
+        for string in quad:
+            print(string, end="\t")
+        self.gen_count = self.gen_count + 1
+
+
     var_declaration_first = [';', '[']
     type_specifier_first = ['int', 'void']
     compound_stmt_first = ['{']
@@ -41,18 +50,20 @@ class Parser:
 
     def type_specifier(self):
         if self.current_token.type in ['int', 'void']:
+            type_spec = self.current_token.value
             self.accept(self.current_token)
+            return type_spec
         else:
             self.result = False
 
     def declaration(self):
-        self.type_specifier()
-        if self.current_token.type =='ID':
-            self.accept('ID')
-            self.declaration_prime()
+        type_spec = self.type_specifier()
+        if self.current_token.type == 'ID':
+            dec_id = self.current_token.value
+            self.accept(self.current_token)
+            self.declaration_prime(type_spec, dec_id)
         else:
             self.result = False
-
 
     def var_declaration(self):
         if self.current_token.type == ';':
@@ -95,12 +106,13 @@ class Parser:
         else:
             self.result = False
 
-    def declaration_prime(self):
+    def declaration_prime(self, type_spec, dec_id):
         if self.current_token.type in self.var_declaration_first:
             self.var_declaration()
         elif self.current_token.type == '(':
+
             self.accept('(')
-            self.params()
+            params = self.params()
             if self.current_token.type == ')':
                 self.accept(')')
                 self.compound_stmt()
@@ -131,7 +143,9 @@ class Parser:
     def params(self):
         if self.current_token.type == 'void':
             self.accept('void')
+            params = []
             self.params_prime()
+            return params
         elif self.current_token.type == 'int':
             self.accept('int')
             if self.current_token.type == 'ID':
@@ -323,7 +337,6 @@ class Parser:
             self.accept(self.current_token)
             self.factor_prime()
         elif self.current_token.type == 'NUM':
-
             self.accept(self.current_token)
         else:
             self.result = False
