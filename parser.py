@@ -5,38 +5,96 @@ import sys
 class Parser:
 
     class CodeGen:
-        count = 0
+        count = 1
         temp_var = 0
-        bp = []
+        bp_stack = []
         code = {}
+        bpw = []
+        bpw_flag = False
+        bpo = []
+        bpo_flag = False
+        bpe = []
+        bpe_flag = False
+        block = []
 
         def add_code(self, quad):
-            self.code.update({str(self.count): quad})
-
-        # def print_quadruple(self, *quad):
-        #     print(str(self.count), end="\t")
-        #     for string in quad:
-        #         string = string + '  '
-        #         print(string, end="\t")
-        #     print('\n', end='')
-        #     self.count += 1
+            if self.bpw_flag:
+                quad.append('bpw= ' + str(self.count))
+                self.code.update({str(self.count): quad})
+                self.bpw_flag = False
+            elif self.bpo_flag:
+                quad.append('loc for bpo')
+                self.code.update({str(self.count): quad})
+                self.bpo_flag = False
+            elif self.bpe_flag:
+                quad.append('val for bpe')
+                self.code.update({str(self.count): quad})
+                self.bpe_flag = False
+            else:
+                self.code.update({str(self.count): quad})
+            self.count += 1
 
         def print_quadruples(self):
-            for i in range(1, self.count+1):
+            for i in range(1, self.count):
                 print(str(i), end="\t")
                 for string in self.code[str(i)]:
                     string = string + ' '
                     print(string, end="\t")
                 print('\n', end='')
-                self.count += 1
 
         def temp(self):
             t = self.temp_var
             self.temp_var += 1
             return str('_t'+str(t))
 
-        def back_patch(self, string):
-            return string
+        # ---- bpe functions --------
+        def bpe_push(self):
+            n = self.count
+            self.bpe.append(n)
+            return n
+
+        # ---- bpw functions -----------
+        def bpw_push(self):
+            n = self.count
+            self.bpw.append(n)
+            self.bpw_flag = True
+            return n
+
+        def bpw_pop(self):
+            n = self.bpw.pop()
+            return n
+
+        # ---- bpo functions -----------
+        def bpo_push(self):
+            n = self.count
+            self.bpo.append(n)
+            return n
+
+        def back_patch_o(self):
+            n = self.bpo.pop()
+            self.bpo_flag = True
+            self.code[str(n)][3] = str(self.count)
+            return n
+
+        def push_block(self):
+            if self.code[str(self.count - 1)][0] != 'func' and self.code[str(self.count - 1)][0] != 'param':
+                if self.code[str(self.count - 2)][0] != 'param':
+                    self.add_code(['block', '\t', '\t', '\t'])
+                    self.block.append('{')
+
+        def pop_block(self):
+            if len(self.block) > 0:
+                self.block.pop()
+                self.add_code(['end', 'block', '\t', '\t'])
+                return True
+            else:
+                return False
+
+        def back_patch_e(self):
+            if len(self.bpe) > 0:
+                n = self.bpe.pop()
+                self.code[str(n)][3] = str(self.count)
+                return n
 
     gen = CodeGen()
 
@@ -62,6 +120,7 @@ class Parser:
 
     def program(self):
         self.declaration_list()
+        self.gen.print_quadruples()
         if self.current_token.type == '$':
             return
         else:
@@ -96,14 +155,14 @@ class Parser:
     def var_declaration(self, type_spec, dec_id):
         if self.current_token.type == ';':
             self.accept(';')
-            self.gen.print_quadruple('alloc', '4 ', '----', dec_id)
+            self.gen.add_code(['alloc', '4', '\t', dec_id])
             return
         elif self.current_token.type == '[':
             self.accept('[')
             if self.current_token.type == 'NUM':
                 number = int(self.current_token.value)
                 self.accept('NUM')
-                self.gen.print_quadruple('alloc', str(4 * number), '\t', dec_id)
+                self.gen.add_code(['alloc', str(4 * number), '\t', dec_id])
                 if self.current_token.type == ']':
                     self.accept(']')
                     if self.current_token.type == ';':
@@ -128,11 +187,13 @@ class Parser:
 
     def compound_stmt(self):
         if self.current_token.type == '{':
+            self.gen.push_block()
             self.accept('{')
             self.local_declarations()
             self.statement_list()
             if self.current_token.type == '}':
                 self.accept('}')
+                self.gen.pop_block()
             else:
                 self.result = False
         else:
@@ -140,17 +201,19 @@ class Parser:
 
     def declaration_prime(self, type_spec, dec_id):
         if self.current_token.type in self.var_declaration_first:
-            self.var_declaration()
+            self.var_declaration(type_spec, dec_id)
         elif self.current_token.type == '(':
             self.accept('(')
             params = self.params()
-            self.gen.print_quadruple('func', dec_id, type_spec, str(len(params)))
+            self.gen.add_code(['func', dec_id, type_spec, str(len(params))])
             if len(params) > 0:
                 for param in params:
-                    self.gen.print_quadruple('param', '----', '----', param)
+                    self.gen.add_code(['param', '\t', '\t', param])
+                    self.gen.add_code(['alloc', '4', '\t', param])
             if self.current_token.type == ')':
                 self.accept(')')
                 self.compound_stmt()
+                self.gen.add_code(['end', 'func', dec_id, '\t'])
 
     def param_prime(self):
         if self.current_token.type == '[':
@@ -226,9 +289,10 @@ class Parser:
                 exp = self.expression()
                 if self.current_token.type == ')':
                     self.accept(')')
-                    self.gen.print_quadruple('BR', exp, '\t',  )
+                    self.gen.add_code(['BRLE', exp, '\t', '???', 'bpe =' + str(self.gen.bpe_push())])
                     self.statement()
                     self.selection_stmt_prime()
+                    self.gen.back_patch_e()
                 else:
                     self.result = False
             else:
@@ -237,17 +301,26 @@ class Parser:
     def selection_stmt_prime(self):
         if self.current_token.type == 'else':
             self.accept('else')
+            self.gen.add_code(['BR', '\t', '\t', '???', 'bpo =' + str(self.gen.bpo_push())])
+            self.gen.back_patch_e()
+            self.gen.bpe_flag = True
             self.statement()
+            self.gen.back_patch_o()
 
     def iteration_stmt(self):
         if self.current_token.type == 'while':
             self.accept('while')
             if self.current_token.type == '(':
                 self.accept('(')
-                self.expression()
+                self.gen.bpw_push()
+                exp = self.expression()
+                self.gen.add_code(['BRLEQ', exp, '\t', '???', 'bpo= ' + str(self.gen.bpo_push())])
                 if self.current_token.type == ')':
                     self.accept(')')
                     self.statement()
+                    n = self.gen.bpw_pop()
+                    self.gen.add_code(['BR', '\t', '\t', str(n), 'val of bpw'])
+                    self.gen.back_patch_o()
                 else:
                     self.result = False
             else:
@@ -262,7 +335,8 @@ class Parser:
         if self.current_token.type == ';':
             self.accept(';')
         elif self.current_token.type in self.expression_first:
-            self.expression()
+            exp = self.expression()
+            self.gen.add_code(['return', '\t', '\t', exp])
             if self.current_token.type == ';':
                 self.accept(';')
             else:
@@ -312,33 +386,47 @@ class Parser:
     def expression_prime(self, ref_id):
         if self.current_token.type == '[':
             self.accept(self.current_token)
-            exp = int(self.expression())
+            exp = self.expression()
             if self.current_token.type == ']':
                 self.accept(']')
                 temp = self.gen.temp()
-                self.gen.print_quadruple('disp', ref_id, str(4*exp), temp)
+                if re.match(r'[0-9]', exp):
+                    temp = self.gen.temp()
+                    num = int(exp)
+                    self.gen.add_code(['disp', ref_id, str(4*num), temp])
+                else:
+                    self.gen.add_code(['mult', exp, '4', temp])
+                    temp2 = self.gen.temp()
+                    self.gen.add_code(['disp', ref_id, temp, temp2])
+                    temp = temp2
                 val = self.expression_double_prime(temp)
                 return val
             else:
                 self.result = False
         elif self.current_token.type == '(':
             self.accept('(')
-            self.args()
+            args = self.args()
+            if len(args) > 0:
+                for arg in args:
+                    self.gen.add_code(['arg', '\t', '\t', arg])
+            temp = self.gen.temp()
+            self.gen.add_code(['call', ref_id, str(len(args)), temp])
             if self.current_token.type == ')':
                 self.accept(')')
-                self.term_prime()
-                self.additive_expression_prime(ref_id)
-                self.simple_expression()
+                val = self.term_prime(temp)
+                val = self.additive_expression_prime(val)
+                val = self.simple_expression(val)
+                return val
             else:
                 self.result = False
-        elif self.current_token.type in self.expression_double_prime_first:
+        else:
             return self.expression_double_prime(ref_id)
 
     def expression_double_prime(self, ref_id):
         if self.current_token.type == '=':
             self.accept(self.current_token)
             temp = self.expression()
-            self.gen.print_quadruple('assgn', temp, '\t', ref_id)
+            self.gen.add_code(['assgn', temp, '\t', ref_id])
         else:
             val = self.term_prime(ref_id)
             val = self.additive_expression_prime(val)
@@ -350,7 +438,7 @@ class Parser:
             self.accept(self.current_token)
             val = self.additive_expression()
             temp = self.gen.temp()
-            self.gen.print_quadruple('compr', var, val, temp)
+            self.gen.add_code(['compr', var, val, temp])
             return temp
         return var
 
@@ -374,9 +462,9 @@ class Parser:
             val = self.additive_expression_prime(val)
             temp = self.gen.temp()
             if op == '+':
-                self.gen.print_quadruple('add', ref_id+' ', val+' ', temp)
-            else:
-                self.gen.print_quadruple('sub', ref_id+' ', val+' ', temp)
+                self.gen.add_code(['add', ref_id+' ', val+' ', temp])
+            elif op == '-':
+                self.gen.add_code(['sub', ref_id+' ', val+' ', temp])
             return temp
         return ref_id
 
@@ -392,9 +480,9 @@ class Parser:
             fact = self.factor()
             temp = self.gen.temp()
             if op == '*':
-                self.gen.print_quadruple('mult', ref_id+' ', fact+' ', temp)
+                self.gen.add_code(['mult', ref_id, fact, temp])
             else:
-                self.gen.print_quadruple('div', ref_id+' ', fact+' ', temp)
+                self.gen.add_code(['div', ref_id, fact, temp])
             term = self.term_prime(temp)
             if term is None:
                 return temp
@@ -414,8 +502,8 @@ class Parser:
         elif self.current_token.type == 'ID':
             ref_id = self.current_token.value
             self.accept(self.current_token)
-            self.factor_prime()
-            return ref_id
+            val = self.factor_prime(ref_id)
+            return val
         elif self.current_token.type == 'NUM':
             number = str(self.current_token.value)
             self.accept(self.current_token)
@@ -423,32 +511,58 @@ class Parser:
         else:
             self.result = False
 
-    def factor_prime(self):
+    def factor_prime(self, ref_id):
         if self.current_token.type == '[':
             self.accept(self.current_token)
-            self.expression()
+            exp = self.expression()
             if self.current_token.type == ']':
                 self.accept(self.current_token)
+                temp = self.gen.temp()
+                if re.match(r'[0-9]', exp):
+                    temp = self.gen.temp()
+                    num = int(exp)
+                    self.gen.add_code(['disp', ref_id, str(4 * num), temp])
+                    return temp
+                else:
+                    self.gen.add_code(['mult', exp, '4 ', temp])
+                    temp2 = self.gen.temp()
+                    self.gen.add_code(['disp', ref_id, temp, temp2])
+                    temp = temp2
+                    return temp
             else:
                 self.result = False
         elif self.current_token.type == '(':
             self.accept(self.current_token)
-            self.args()
+            args = self.args()
+            if len(args) > 0:
+                for arg in args:
+                    self.gen.add_code(['arg', '\t', '\t', arg])
+            temp = self.gen.temp()
+            self.gen.add_code(['call', ref_id, str(len(args)), temp])
             if self.current_token.type == ')':
                 self.accept(self.current_token)
+                return temp
             else:
                 self.result = False
+        return ref_id
 
     def args(self):
+        args = []
         if self.current_token.type in self.expression_first:
-            self.expression()
-            self.arg_list()
+            exp = self.expression()
+            args.append(exp)
+            args = args + self.arg_list()
+            return args
 
     def arg_list(self):
+        args = []
         if self.current_token.type == ',':
             self.accept(self.current_token)
-            self.expression()
-            self.arg_list()
+            exp = self.expression()
+            args.append(exp)
+            args = args + self.arg_list()
+            return args
+        return []
 
 
 try:
